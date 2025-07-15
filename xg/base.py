@@ -150,11 +150,11 @@ class XGTypeCompiler(compiler.GenericTypeCompiler):
 
     def visit_VARCHAR2(self, type_, **kw):
         self.dialect.trace_process('XGTypeCompiler', 'visit_VARCHAR2', type_, **kw)
-        return self._visit_varchar(type_, '', '2')
+        return self._visit_varchar(type_, '', '')
 
     def visit_NVARCHAR2(self, type_, **kw):
         self.dialect.trace_process('XGTypeCompiler', 'visit_NVARCHAR2', type_, **kw)
-        return self._visit_varchar(type_, 'N', '2')
+        return self._visit_varchar(type_, '', '')
     visit_NVARCHAR = visit_NVARCHAR2
 
     def visit_VARCHAR(self, type_, **kw):
@@ -168,13 +168,10 @@ class XGTypeCompiler(compiler.GenericTypeCompiler):
     def _visit_varchar(self, type_, n, num):
         self.dialect.trace_process('XGTypeCompiler', '_visit_varchar', type_, n, num)
         if not type_.length:
-            return "%(n)sVARCHAR%(two)s" % {'two': num, 'n': n}
-        elif not n and self.dialect._supports_char_length:
-            varchar = "VARCHAR%(two)s(%(length)s CHAR)"
-            return varchar % {'length': type_.length, 'two': num}
+            return "VARCHAR%"
         else:
-            varchar = "%(n)sVARCHAR%(two)s(%(length)s)"
-            return varchar % {'length': type_.length, 'two': num, 'n': n}
+            varchar = "VARCHAR(%(length)s )"
+            return varchar % {'length': type_.length}
 
     def visit_text(self, type_, **kw):
         self.dialect.trace_process('XGTypeCompiler', 'visit_text', type_, **kw)
@@ -500,11 +497,16 @@ class XGExecutionContext(default.DefaultExecutionContext):
 
     def get_lastrowid(self):
         cursor = self.create_cursor()
-        # rowid = cursor.getResultRowid()
-        # cursor.execute("SELECT id from " +
-        #     str(self.compiled.statement.table) +
-        #     " where rowid = '" + str(rowid) + "';")
-        cursor.execute("select last_insert_id();")
+        cursor.execute("show version;")
+        version = cursor.fetchone()[0]
+        if version.endswith('11.0.0'):
+            rowid = cursor.getResultRowid()
+            cursor.execute("SELECT id from " +
+                           str(self.compiled.statement.table) +
+                           " where rowid = '" + str(rowid) + "';")
+        else:
+            cursor.execute("select last_insert_id();")
+
         lastrowid = cursor.fetchone()[0]
         return lastrowid
 
