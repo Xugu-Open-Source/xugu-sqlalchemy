@@ -150,11 +150,11 @@ class XGTypeCompiler(compiler.GenericTypeCompiler):
 
     def visit_VARCHAR2(self, type_, **kw):
         self.dialect.trace_process('XGTypeCompiler', 'visit_VARCHAR2', type_, **kw)
-        return self._visit_varchar(type_, '', '2')
+        return self._visit_varchar(type_, '', '')
 
     def visit_NVARCHAR2(self, type_, **kw):
         self.dialect.trace_process('XGTypeCompiler', 'visit_NVARCHAR2', type_, **kw)
-        return self._visit_varchar(type_, 'N', '2')
+        return self._visit_varchar(type_, '', '')
     visit_NVARCHAR = visit_NVARCHAR2
 
     def visit_VARCHAR(self, type_, **kw):
@@ -168,13 +168,10 @@ class XGTypeCompiler(compiler.GenericTypeCompiler):
     def _visit_varchar(self, type_, n, num):
         self.dialect.trace_process('XGTypeCompiler', '_visit_varchar', type_, n, num)
         if not type_.length:
-            return "%(n)sVARCHAR%(two)s" % {'two': num, 'n': n}
-        elif not n and self.dialect._supports_char_length:
-            varchar = "VARCHAR%(two)s(%(length)s CHAR)"
-            return varchar % {'length': type_.length, 'two': num}
+            return "VARCHAR%"
         else:
-            varchar = "%(n)sVARCHAR%(two)s(%(length)s)"
-            return varchar % {'length': type_.length, 'two': num, 'n': n}
+            varchar = "VARCHAR(%(length)s )"
+            return varchar % {'length': type_.length}
 
     def visit_text(self, type_, **kw):
         self.dialect.trace_process('XGTypeCompiler', 'visit_text', type_, **kw)
@@ -283,56 +280,6 @@ class XGCompiler(compiler.SQLCompiler):
         self.dialect.trace_process('XGCompiler', 'get_render_as_alias_suffix', alias_name_text)
         return " " + alias_name_text
 
-    def returning_clause(self, stmt, returning_cols):
-        self.dialect.trace_process('XGCompiler', 'returning_clause', stmt, returning_cols)
-        columns = []
-        binds = []
-        for i, column in enumerate(
-                expression._select_iterables(returning_cols)):
-            
-            if (
-                self.isupdate
-                and isinstance(column, sa_schema.Column)
-                and isinstance(column.server_default, Computed)
-                and not self.dialect._supports_update_returning_computed_cols
-            ):
-                util.warn(
-                    "Computed columns don't work with Dameng UPDATE "
-                    "statements that use RETURNING; the value of the column "
-                    "*before* the UPDATE takes place is returned.   It is "
-                    "advised to not use RETURNING with an Dameng computed "
-                    "column.  Consider setting implicit_returning to False on "
-                    "the Table object in order to avoid implicit RETURNING "
-                    "clauses from being generated for this Table."
-                )
-            
-            if column.type._has_column_expression:
-                col_expr = column.type.column_expression(column)
-            else:
-                col_expr = column
-            outparam = sql.outparam("ret_%d" % i, type_=column.type)
-            self.binds[outparam.key] = outparam
-            binds.append(self.bindparam_string(self._truncate_bindparam(outparam)))
-            
-            # ensure the ExecutionContext.get_out_parameters() method is
-            # *not* called; the XG dialect wants to handle these
-            # parameters separately
-            self.has_out_parameters = False
-            
-            columns.append(self.process(col_expr, within_columns_clause=False))
-
-            self._add_to_result_map(
-                getattr(col_expr, "name", col_expr.anon_label),
-                getattr(col_expr, "name", col_expr.anon_label),
-                (
-                    column,
-                    getattr(column, "name", None),
-                    getattr(column, "key", None),
-                ),
-                column.type,
-            )
-
-        return 'RETURNING ' + ', '.join(columns) + " INTO " + ", ".join(binds)
 
     def _TODO_visit_compound_select(self, select):
         """Need to determine how to get ``LIMIT``/``OFFSET`` into a
@@ -550,11 +497,16 @@ class XGExecutionContext(default.DefaultExecutionContext):
 
     def get_lastrowid(self):
         cursor = self.create_cursor()
-        # rowid = cursor.getResultRowid()
-        # cursor.execute("SELECT id from " +
-        #     str(self.compiled.statement.table) +
-        #     " where rowid = '" + str(rowid) + "';")
-        cursor.execute("select last_insert_id();")
+        cursor.execute("show version;")
+        version = cursor.fetchone()[0]
+        if version.endswith('11.0.0'):
+            rowid = cursor.getResultRowid()
+            cursor.execute("SELECT id from " +
+                           str(self.compiled.statement.table) +
+                           " where rowid = '" + str(rowid) + "';")
+        else:
+            cursor.execute("select last_insert_id();")
+
         lastrowid = cursor.fetchone()[0]
         return lastrowid
 
@@ -645,10 +597,7 @@ class XGDialect(default.DefaultDialect):
 
     def initialize(self, connection):
         super(XGDialect, self).initialize(connection)
-        self.implicit_returning = self.__dict__.get(
-            'implicit_returning',
-            self.server_version_info > (10, )
-        )
+        self.implicit_returning = False
         self.default_schema_name = self._get_default_database_name(connection)
         
     def trace_process(self, cls_str=None, func_str=None, *args, **kws):
